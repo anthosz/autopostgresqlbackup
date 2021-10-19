@@ -254,15 +254,15 @@ dbdump () {
   for db in $1 ; do
     if [ -n "${SU_USERNAME}" ]; then
       if [ "${db}" = "${GLOBALS}_OBJECTS" ]; then
-        su - ${SU_USERNAME} -l -c "pg_dumpall ${PGHOST} --globals-only" >> $2
+        su - ${SU_USERNAME} -l -c "pg_dumpall ${PGHOST} --globals-only"
       else
-        su - ${SU_USERNAME} -l -c "pg_dump ${PGHOST} ${OPT} ${db}" >> $2
+        su - ${SU_USERNAME} -l -c "pg_dump ${PGHOST} ${OPT} ${db}"
       fi
     else
       if [ "${db}" = "${GLOBALS}_OBJECTS" ]; then
-        pg_dumpall --username=${USERNAME} ${PGHOST} --globals-only >> $2
+        pg_dumpall --username=${USERNAME} ${PGHOST} --globals-only
       else
-        pg_dump --username=${USERNAME} ${PGHOST} ${OPT} ${db} >> $2
+        pg_dump --username=${USERNAME} -f $2 ${PGHOST} ${OPT} ${db}
       fi
     fi
   done
@@ -292,28 +292,28 @@ encryption() {
 # Compression (and encrypt) function plus latest copy
 SUFFIX=""
 compression () {
-if [ "${COMP}" = "gzip" ]; then
-  gzip -f "$1"
-  echo
-  echo Backup Information for "$1"
-  gzip -l "$1.gz"
-  SUFFIX=".gz"
-elif [ "${COMP}" = "bzip2" ]; then
-  echo Compression information for "$1.bz2"
-  bzip2 -f -v $1 2>&1
-  SUFFIX=".bz2"
-elif [ "${COMP}" = "xz" ]; then
-  echo Compression information for "$1.xz"
-  xz -4 -v $1 2>&1
-  SUFFIX=".xz"
-else
-  echo "No compression option set, check advanced settings"
-fi
-encryption $1${SUFFIX}
-if [ "${LATEST}" = "yes" ]; then
-  cp $1${SUFFIX}* "${BACKUPDIR}/latest/"
-fi
-return 0
+  if [ "${COMP}" = "gzip" ]; then
+    gzip -f "$1"
+    echo
+    echo Backup Information for "$1"
+    gzip -l "$1.gz"
+    SUFFIX=".gz"
+  elif [ "${COMP}" = "bzip2" ]; then
+    echo Compression information for "$1.bz2"
+    bzip2 -f -v $1 2>&1
+    SUFFIX=".bz2"
+  elif [ "${COMP}" = "xz" ]; then
+    echo Compression information for "$1.xz"
+    xz -4 -v $1 2>&1
+    SUFFIX=".xz"
+  else
+    echo "No compression option set, check advanced settings"
+  fi
+  encryption $1${SUFFIX}
+  if [ "${LATEST}" = "yes" ]; then
+    cp $1* "${BACKUPDIR}/latest/"
+  fi
+  return 0
 }
 
 # Run command before we begin
@@ -327,15 +327,12 @@ if [ "${PREBACKUP}" ]; then
   echo
 fi
 
-if [ "${SEPDIR}" = "yes" ]; then # Check if CREATE DATABSE should be included in Dump
-  if [ "${CREATE}_DATABASE" = "no" ]; then
-    OPT="${OPT}"
-  else
-    OPT="${OPT} --create"
-  fi
-else
+if [ "${CREATE_DATABASE}" = "no" ]; then
   OPT="${OPT}"
+else
+  OPT="${OPT} --create"
 fi
+OPT="${OPT} -F d -j 2 -Z 0"
 
 # Hostname for LOG information
 if [ "${DBHOST}" = "localhost" ]; then
@@ -363,8 +360,8 @@ if [ "${DBNAMES}" = "all" ]; then
 fi
 
 # Include global objects (users, tablespaces)
-DBNAMES="${GLOBALS}_OBJECTS ${DBNAMES}"
-MDBNAMES="${GLOBALS}_OBJECTS ${MDBNAMES}"
+#DBNAMES="${GLOBALS}_OBJECTS ${DBNAMES}"
+#MDBNAMES="${GLOBALS}_OBJECTS ${MDBNAMES}"
 
 echo ======================================================================
 echo AutoPostgreSQLBackup VER ${VER}
@@ -373,83 +370,36 @@ echo
 echo Backup of Database Server - ${HOST}
 echo ======================================================================
 
-# Test is separate DB backups are required
-if [ "${SEPDIR}" = "yes" ]; then
 echo Backup Start Time `date`
 echo ======================================================================
-  # Monthly Full Backup of all Databases
-  if [[ "${DOMONTHLY}" = "yes" && "${DOM}" = "01" ]]; then
-    for MDB in ${MDBNAMES}; do
-      # Prepare ${DB} for using
-      MDB="`echo ${MDB} | sed 's/%/ /g'`"
-      if [ ! -e "${BACKUPDIR}/monthly/${MDB}" ]; then
-          mkdir -p "${BACKUPDIR}/monthly/${MDB}"
-      fi
-      echo Monthly Backup of ${MDB}...
-          dbdump "${MDB}" "${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}.${EXT}"
-          compression "${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}.${EXT}"
-          BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}.${EXT}${SUFFIX}*"
-      echo ----------------------------------------------------------------------
-    done
-  fi
-
-  for DB in ${DBNAMES}; do
+# Monthly Full Backup of all Databases
+if [[ "${DOMONTHLY}" = "yes" && "${DOM}" = "01" ]]; then
+  for MDB in ${MDBNAMES}; do
     # Prepare ${DB} for using
-    DB="`echo ${DB} | sed 's/%/ /g'`"
-    # Create Seperate directory for each DB
-    if [ ! -e "${BACKUPDIR}/daily/${DB}" ]; then
-      mkdir -p "${BACKUPDIR}/daily/${DB}"
+    MDB="`echo ${MDB} | sed 's/%/ /g'`"
+    if [ ! -e "${BACKUPDIR}/monthly/${MDB}" ]; then
+        mkdir -p "${BACKUPDIR}/monthly/${MDB}"
     fi
-    if [ ! -e "${BACKUPDIR}/weekly/${DB}" ]; then
-      mkdir -p "${BACKUPDIR}/weekly/${DB}"
-    fi
-    # Weekly Backup
-    if [ "${DNOW}" = "${DOWEEKLY}" ]; then
-      echo Weekly Backup of Database \( ${DB} \)
-      echo Rotating 5 weeks Backups...
-      if [ "${W}" -le 05 ]; then
-        REMW=`expr 48 + ${W}`
-      elif [ "${W}" -lt 15 ]; then
-        REMW=0`expr ${W} - 5`
-      else
-        REMW=`expr ${W} - 5`
-      fi
-      rm -fv "${BACKUPDIR}/weekly/${DB}/${DB}_week.${REMW}".*
-      echo
-      dbdump "${DB}" "${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}.${EXT}"
-      compression "${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}.${EXT}"
-      BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}.${EXT}${SUFFIX}*"
-      echo ----------------------------------------------------------------------
-    # Daily Backup
-    else
-      echo Daily Backup of Database \( ${DB} \)
-      echo Rotating daily backups...
-      find "${BACKUPDIR}/daily/${DB}" -mtime +"${ROTATIONDAILY}" -type f -exec rm {} \;
-      echo
-      dbdump "${DB}" "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}.${EXT}"
-      compression "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}.${EXT}"
-      BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}.${EXT}${SUFFIX}*"
-      echo ----------------------------------------------------------------------
-    fi
-  done
-echo Backup End `date`
-echo ======================================================================
-
-else # One backup file for all DBs
-echo Backup Start `date`
-echo ======================================================================
-  # Monthly Full Backup of all Databases
-  if [[ "${DOMONTHLY}" = "yes" && "${DOM}" = "01" ]]; then
-    echo Monthly full Backup of \( ${MDBNAMES} \)...
-    dbdump "${MDBNAMES}" "${BACKUPDIR}/monthly/${DATE}.${M}.all-databases.${EXT}"
-    compression "${BACKUPDIR}/monthly/${DATE}.${M}.all-databases.${EXT}"
-    BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/monthly/${DATE}.${M}.all-databases.${EXT}${SUFFIX}*"
+    echo Monthly Backup of ${MDB}...
+        dbdump "${MDB}" "${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}/"
+        compression "${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}/*"
+        BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}/*"
     echo ----------------------------------------------------------------------
+  done
+fi
+for DB in ${DBNAMES}; do
+  # Prepare ${DB} for using
+  DB="`echo ${DB} | sed 's/%/ /g'`"
+  # Create Seperate directory for each DB
+  if [ ! -e "${BACKUPDIR}/daily/${DB}" ]; then
+    mkdir -p "${BACKUPDIR}/daily/${DB}"
+  fi
+  if [ ! -e "${BACKUPDIR}/weekly/${DB}" ]; then
+    mkdir -p "${BACKUPDIR}/weekly/${DB}"
   fi
   # Weekly Backup
   if [ "${DNOW}" = "${DOWEEKLY}" ]; then
-    echo Weekly Backup of Databases \( ${DBNAMES} \)
-    echo
+    echo Weekly Backup of Database \( ${DB} \)
     echo Rotating 5 weeks Backups...
     if [ "${W}" -le 05 ]; then
       REMW=`expr 48 + ${W}`
@@ -458,26 +408,26 @@ echo ======================================================================
     else
       REMW=`expr ${W} - 5`
     fi
-    rm -fv "${BACKUPDIR}/weekly/week.${REMW}".*
+    rm -fv "${BACKUPDIR}/weekly/${DB}/${DB}_week.${REMW}".*
     echo
-      dbdump "${DBNAMES}" "${BACKUPDIR}/weekly/week.${W}.${DATE}.${EXT}"
-      compression "${BACKUPDIR}/weekly/week.${W}.${DATE}.${EXT}"
-      BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/weekly/week.${W}.${DATE}.${EXT}${SUFFIX}*"
+    dbdump "${DB}" "${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}/"
+    compression "${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}/*"
+    BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}/*"
     echo ----------------------------------------------------------------------
   # Daily Backup
   else
-    echo Daily Backup of Databases \( ${DBNAMES} \)
+    echo Daily Backup of Database \( ${DB} \)
     echo Rotating daily backups...
-    find "${BACKUPDIR}/daily" -mtime +"${ROTATIONDAILY}" -type f -exec rm {} \;
+    find "${BACKUPDIR}/daily/${DB}" -mtime +"${ROTATIONDAILY}" -type f -exec rm {} \;
     echo
-      dbdump "${DBNAMES}" "${BACKUPDIR}/daily/${DATE}.${DOW}.${EXT}"
-      compression "${BACKUPDIR}/daily/${DATE}.${DOW}.${EXT}"
-      BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/daily/${DATE}.${DOW}.${EXT}${SUFFIX}*"
+    dbdump "${DB}" "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/"
+    compression "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/*"
+    BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/*"
     echo ----------------------------------------------------------------------
   fi
-echo Backup End Time `date`
+done
+echo Backup End `date`
 echo ======================================================================
-fi
 echo Total disk space used for backup storage..
 echo Size - Location
 echo `du -hs "${BACKUPDIR}"`
@@ -550,9 +500,9 @@ else
 fi
 
 if [ -s "${LOGERR}" ]; then
-    STATUS=1
-  else
-    STATUS=0
+  STATUS=1
+else
+  STATUS=0
 fi
 
 # Clean up Logfile
