@@ -183,10 +183,9 @@ M=`date +%B`                    # Month e.g January
 W=`date +%V`                    # Week Number e.g 37
 VER=1.0                         # Version Number
 SCRIPT=$(readlink -f $0)
-SCRIPTPATH=`dirname ${SCRIPT}`
-if [ -f ${SCRIPT} ]; then source ${SCRIPT}/${SCRIPT}.conf;
+if [ -f ${SCRIPT}.conf ]; then source ${SCRIPT}.conf; fi
 
-while getopts ":c:h" Option
+while getopts "hc:" Option
 do
   case $Option in
     c )
@@ -201,26 +200,24 @@ do
     ;;
     * )
       echo "Unimplemented option chosen.";
+    ;;
   esac
 done
 
 LOGFILE=${BACKUPDIR}/${DBHOST//\//_}-`date +%N`.log           # Logfile Name
 LOGERR=${BACKUPDIR}/ERRORS_${DBHOST//\//_}-`date +%N`.log     # Logfile Name
 BACKUPFILES=""
-
 # Add --compress pg_dump option to ${OPT}
 if [ "${COMMCOMP}" -gt 0 ]; then
   OPT="${OPT} --compress=${COMMCOMP}"
 fi
 
 # Create required directories
-if [ ! -e "${BACKUPDIR}" ]; then
-  mkdir -p "${BACKUPDIR}"
-fi
-
 if [ ! -e "${BACKUPDIR}/daily" ]; then
   mkdir -p "${BACKUPDIR}/daily"
 fi
+
+if [ $? -ne 0 ]; then echo "Unable to create ${BACKUPDIR}"; exit 1; fi
 
 if [ ! -e "${BACKUPDIR}/weekly" ]; then
   mkdir -p "${BACKUPDIR}/weekly"
