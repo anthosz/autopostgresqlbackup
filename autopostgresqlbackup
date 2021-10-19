@@ -182,6 +182,23 @@ DOM=`date +%d`                  # Date of the Month e.g. 27
 M=`date +%B`                    # Month e.g January
 W=`date +%V`                    # Week Number e.g 37
 VER=1.0                         # Version Number
+SCRIPT=$(readlink -f $0)
+SCRIPTPATH=`dirname ${SCRIPT}`
+if [ -f ${SCRIPT} ]; then source ${SCRIPT}/${SCRIPT}.conf;
+
+while getopts ":c:h" Option
+do
+  case $Option in
+    c ) echo "Using \"$OPTARG\" as optional config file."
+      if [ -f ${OPTARG} ]; then source ${OPTARG};
+      else echo "File not found.."; exit; fi
+    h )     echo "Usage `basename $0` options -cblh"
+      echo -e "-c CONFIG_FILE\tSpecify optional config file."
+      exit 0
+    * ) echo "Unimplemented option chosen.";
+  esac
+done
+
 LOGFILE=${BACKUPDIR}/${DBHOST//\//_}-`date +%N`.log           # Logfile Name
 LOGERR=${BACKUPDIR}/ERRORS_${DBHOST//\//_}-`date +%N`.log     # Logfile Name
 BACKUPFILES=""
