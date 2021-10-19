@@ -187,9 +187,9 @@ if [ -f ${SCRIPT}.conf ]; then source ${SCRIPT}.conf; fi
 
 while getopts "hc:" Option
 do
-  case $Option in
+  case ${Option} in
     c )
-      echo "Using \"$OPTARG\" as optional config file."
+      echo "Using \"${OPTARG}\" as optional config file."
       if [ -f ${OPTARG} ]; then source ${OPTARG};
       else echo "File not found.."; exit; fi
     ;;
@@ -252,11 +252,11 @@ dbdump () {
   touch $2
   chmod ${PERM} $2
   for db in $1 ; do
-    if [ -n "${SU}_USERNAME" ]; then
+    if [ -n "${SU_USERNAME}" ]; then
       if [ "${db}" = "${GLOBALS}_OBJECTS" ]; then
-        su - ${SU}_USERNAME -l -c "pg_dumpall ${PGHOST} --globals-only" >> $2
+        su - ${SU_USERNAME} -l -c "pg_dumpall ${PGHOST} --globals-only" >> $2
       else
-        su - ${SU}_USERNAME -l -c "pg_dump ${PGHOST} ${OPT} ${db}" >> $2
+        su - ${SU_USERNAME} -l -c "pg_dump ${PGHOST} ${OPT} ${db}" >> $2
       fi
     else
       if [ "${db}" = "${GLOBALS}_OBJECTS" ]; then
@@ -348,8 +348,8 @@ fi
 
 # If backing up all DBs on the server
 if [ "${DBNAMES}" = "all" ]; then
-  if [ -n "${SU}_USERNAME" ]; then
-    DBNAMES="$(su - ${SU}_USERNAME -l -c "LANG=C psql -U ${USERNAME} ${PGHOST} -l -A -F: | sed -ne '/:/ { /Name:Owner/d; /template0/d; s/:.*$//; p }'")"
+  if [ -n "${SU_USERNAME}" ]; then
+    DBNAMES="$(su - ${SU_USERNAME} -l -c "LANG=C psql -U ${USERNAME} ${PGHOST} -l -A -F: | sed -ne '/:/ { /Name:Owner/d; /template0/d; s/:.*$//; p }'")"
   else
     DBNAMES="`LANG=C psql -U ${USERNAME} ${PGHOST} -l -A -F: | sed -ne "/:/ { /Name:Owner/d; /template0/d; s/:.*$//; p }"`"
   fi
