@@ -419,6 +419,7 @@ for DB in ${DBNAMES}; do
     echo Daily Backup of Database \( ${DB} \)
     echo Rotating daily backups...
     find "${BACKUPDIR}/daily/${DB}" -mtime +"${ROTATIONDAILY}" -type f -exec rm {} \;
+    find "${BACKUPDIR}/daily/${DB}" -type d -empty -type f -exec rmdir {} \;
     echo
     dbdump "${DB}" "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/"
     compression "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/*"
