@@ -151,7 +151,7 @@
 # Next you will need to use the postgresql client to restore the DB from the
 # sql file.
 # eg.
-# psql --host dbserver --dbname database < /path/file.sql
+# psql --host dbserver --dbname database --port 5432 < /path/file.sql
 #
 # NOTE: Make sure you use "<" and not ">" in the above command because
 # you are piping the file.sql to psql and not the other way around.
@@ -339,11 +339,11 @@ fi
 
 # Hostname for LOG information
 if [ "${DBHOST}" = "localhost" ]; then
-  HOST=`hostname`
-  PGHOST=""
+  HOST=`hostname`-${DBPORT}
+  PGHOST="-p ${DBPORT}"
 else
-  HOST=${DBHOST}
-  PGHOST="-h ${DBHOST}"
+  HOST=${DBHOST}-${DBPORT}
+  PGHOST="-h ${DBHOST} -p ${DBPORT}"
 fi
 
 # If backing up all DBs on the server
