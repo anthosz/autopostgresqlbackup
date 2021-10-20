@@ -25,119 +25,6 @@
 # (Detailed instructions below variables)
 #=====================================================================
 
-# Username to access the PostgreSQL server e.g. dbuser
-USERNAME=postgres
-
-# Password
-# create a file $HOME/.pgpass containing a line like this
-#   hostname:*:*:dbuser:dbpass
-# replace hostname with the value of DBHOST and postgres with
-# the value of USERNAME
-
-# Host name (or IP address) of PostgreSQL server e.g localhost
-DBHOST=localhost
-
-# List of DBNAMES for Daily/Weekly Backup e.g. "DB1 DB2 DB3"
-DBNAMES="all"
-
-# pseudo database name used to dump global objects (users, roles, tablespaces)
-GLOBALS_OBJECTS="postgres_globals"
-
-# Backup directory location e.g /backups
-BACKUPDIR="/backups"
-
-# Mail setup
-# What would you like to be mailed to you?
-# - log   : send only log file
-# - files : send log file and sql files as attachments (see docs)
-# - stdout : will simply output the log to the screen if run manually.
-# - quiet : Only send logs if an error occurs to the MAILADDR.
-MAILCONTENT="stdout"
-
-# Set the maximum allowed email size in k. (4000 = approx 5MB email [see docs])
-MAXATTSIZE="4000"
-
-# Email Address to send mail to? (user@domain.com)
-MAILADDR="user@domain.com"
-
-# ============================================================
-# === ADVANCED OPTIONS ( Read the doc's below for details )===
-#=============================================================
-
-# List of DBBNAMES for Monthly Backups.
-MDBNAMES="template1 $DBNAMES"
-
-# List of DBNAMES to EXLUCDE if DBNAMES are set to all (must be in " quotes)
-DBEXCLUDE=""
-
-# Include CREATE DATABASE in backup?
-CREATE_DATABASE=yes
-
-# Separate backup directory and file for each DB? (yes or no)
-SEPDIR=yes
-
-# Which day do you want weekly backups? (1 to 7 where 1 is Monday)
-DOWEEKLY=6
-
-# Choose Compression type. (gzip, bzip2 or xz)
-COMP=gzip
-
-# Compress communications between backup server and PostgreSQL server?
-# set compression level from 0 to 9 (0 means no compression)
-COMMCOMP=0
-
-# Additionally keep a copy of the most recent backup in a seperate directory.
-LATEST=no
-
-# OPT string for use with pg_dump ( see man pg_dump )
-OPT=""
-
-# Backup files extension
-EXT="sql"
-
-# Backup files permissions
-PERM=600
-
-# Encyrption settings
-# (inspired by http://blog.altudov.com/2010/09/27/using-openssl-for-asymmetric-encryption-of-backups/)
-#
-# Once the backup done, each SQL dump will be encrypted and the original file
-# will be deleted (if encryption was successful).
-# It is recommended to backup into a staging directory, and then use the
-# POSTBACKUP script to sync the encrypted files to the desired location.
-#
-# Encryption uses private/public keys. You can generate the key pairs like the following:
-# openssl req -x509 -nodes -days 100000 -newkey rsa:2048 -keyout backup.key -out backup.crt -subj '/'
-#
-# Decryption:
-# openssl smime -decrypt -in backup.sql.gz.enc -binary -inform DEM -inkey backup.key -out backup.sql.gz
-
-# Enable encryption
-ENCRYPTION=no
-
-# Encryption public key
-ENCRYPTION_PUBLIC_KEY=""
-
-# Encryption Cipher (see enc manpage)
-ENCRYPTION_CIPHER="aes256"
-
-# Suffix for encyrpted files
-ENCRYPTION_SUFFIX=".enc"
-
-# Command to run before backups (uncomment to use)
-#PREBACKUP="/etc/postgresql-backup-pre"
-
-# Command run after backups (uncomment to use)
-#POSTBACKUP="/etc/postgresql-backup-post"
-
-#=====================================================================
-# Debian specific options ===
-#=====================================================================
-
-if [ -f /etc/default/autopostgresqlbackup ]; then
-    . /etc/default/autopostgresqlbackup
-fi
-
 #=====================================================================
 # Options documentation
 #=====================================================================
@@ -264,7 +151,7 @@ fi
 # Next you will need to use the postgresql client to restore the DB from the
 # sql file.
 # eg.
-# psql --host dbserver --dbname database < /path/file.sql
+# psql --host dbserver --dbname database --port 5432 < /path/file.sql
 #
 # NOTE: Make sure you use "<" and not ">" in the above command because
 # you are piping the file.sql to psql and not the other way around.
@@ -295,400 +182,330 @@ DOM=`date +%d`                  # Date of the Month e.g. 27
 M=`date +%B`                    # Month e.g January
 W=`date +%V`                    # Week Number e.g 37
 VER=1.0                         # Version Number
-LOGFILE=$BACKUPDIR/${DBHOST//\//_}-`date +%N`.log           # Logfile Name
-LOGERR=$BACKUPDIR/ERRORS_${DBHOST//\//_}-`date +%N`.log     # Logfile Name
-BACKUPFILES=""
+SCRIPT=$(readlink -f $0)
+if [ -f ${SCRIPT}.conf ]; then source ${SCRIPT}.conf; fi
 
-# Add --compress pg_dump option to $OPT
-if [ "$COMMCOMP" -gt 0 ];
-    then
-    OPT="$OPT --compress=$COMMCOMP"
+while getopts "hc:" Option
+do
+  case ${Option} in
+    c )
+      echo "Using \"${OPTARG}\" as optional config file."
+      if [ -f ${OPTARG} ]; then source ${OPTARG};
+      else echo "File not found.."; exit; fi
+    ;;
+    h )
+      echo "Usage `basename $0` options -cblh"
+      echo -e "-c CONFIG_FILE\tSpecify optional config file."
+      exit 0
+    ;;
+    * )
+      echo "Unimplemented option chosen.";
+    ;;
+  esac
+done
+
+LOGFILE=${BACKUPDIR}/${DBHOST//\//_}-`date +%N`.log           # Logfile Name
+LOGERR=${BACKUPDIR}/ERRORS_${DBHOST//\//_}-`date +%N`.log     # Logfile Name
+BACKUPFILES=""
+# Add --compress pg_dump option to ${OPT}
+if [ "${COMMCOMP}" -gt 0 ]; then
+  OPT="${OPT} --compress=${COMMCOMP}"
 fi
 
 # Create required directories
-if [ ! -e "$BACKUPDIR" ]        # Check Backup Directory exists.
-    then
-    mkdir -p "$BACKUPDIR"
+if [ ! -e "${BACKUPDIR}/daily" ]; then
+  mkdir -p "${BACKUPDIR}/daily"
 fi
 
-if [ ! -e "$BACKUPDIR/daily" ]      # Check Daily Directory exists.
-    then
-    mkdir -p "$BACKUPDIR/daily"
+if [ $? -ne 0 ]; then echo "Unable to create ${BACKUPDIR}"; exit 1; fi
+
+if [ ! -e "${BACKUPDIR}/weekly" ]; then
+  mkdir -p "${BACKUPDIR}/weekly"
 fi
 
-if [ ! -e "$BACKUPDIR/weekly" ]     # Check Weekly Directory exists.
-    then
-    mkdir -p "$BACKUPDIR/weekly"
+if [ ! -e "${BACKUPDIR}/monthly" ]; then
+  mkdir -p "${BACKUPDIR}/monthly"
 fi
 
-if [ ! -e "$BACKUPDIR/monthly" ]    # Check Monthly Directory exists.
-    then
-    mkdir -p "$BACKUPDIR/monthly"
-fi
-
-if [ "$LATEST" = "yes" ]
+if [ "${LATEST}" = "yes" ]
 then
-    if [ ! -e "$BACKUPDIR/latest" ] # Check Latest Directory exists.
-    then
-        mkdir -p "$BACKUPDIR/latest"
-    fi
-rm -f "$BACKUPDIR"/latest/*
+  if [ ! -e "${BACKUPDIR}/latest" ]; then
+    mkdir -p "${BACKUPDIR}/latest"
+  fi
+rm -f "${BACKUPDIR}"/latest/*
 fi
 
 # IO redirection for logging.
-touch $LOGFILE
-exec 6>&1           # Link file descriptor #6 with stdout.
-                    # Saves stdout.
-exec > $LOGFILE     # stdout replaced with file $LOGFILE.
-touch $LOGERR
-exec 7>&2           # Link file descriptor #7 with stderr.
-                    # Saves stderr.
-exec 2> $LOGERR     # stderr replaced with file $LOGERR.
-
+touch ${LOGFILE}
+exec 6>&1  # Link file descriptor #6 with stdout.
+  # Saves stdout.
+exec > ${LOGFILE}  # stdout replaced with file ${LOGFILE}.
+touch ${LOGERR}
+exec 7>&2  # Link file descriptor #7 with stderr.
+  # Saves stderr.
+exec 2> ${LOGERR}  # stderr replaced with file ${LOGERR}.
 
 # Functions
-
 # Database dump function
 dbdump () {
-    rm -f $2
-    touch $2
-    chmod $PERM $2
-    for db in $1 ; do
-        if [ -n "$SU_USERNAME" ]; then
-            if [ "$db" = "$GLOBALS_OBJECTS" ]; then
-                su - $SU_USERNAME -l -c "pg_dumpall $PGHOST --globals-only" >> $2
-            else
-                su - $SU_USERNAME -l -c "pg_dump $PGHOST $OPT $db" >> $2
-            fi
-        else
-            if [ "$db" = "$GLOBALS_OBJECTS" ]; then
-                pg_dumpall --username=$USERNAME $PGHOST --globals-only >> $2
-            else
-                pg_dump --username=$USERNAME $PGHOST $OPT $db >> $2
-            fi
-        fi
-    done
-    return 0
+  rm -f $2
+  for db in $1 ; do
+    if [ -n "${SU_USERNAME}" ]; then
+      if [ "${db}" = "${GLOBALS}_OBJECTS" ]; then
+        su - ${SU_USERNAME} -l -c "pg_dumpall ${PGHOST} --globals-only"
+      else
+        su - ${SU_USERNAME} -l -c "pg_dump ${PGHOST} ${OPT} ${db}"
+      fi
+    else
+      if [ "${db}" = "${GLOBALS}_OBJECTS" ]; then
+        pg_dumpall --username=${USERNAME} ${PGHOST} --globals-only
+      else
+        pg_dump --username=${USERNAME} -f $2 ${PGHOST} ${OPT} ${db}
+      fi
+    fi
+  done
+  return 0
 }
 
 # Encryption function
 encryption() {
-    ENCRYPTED_FILE="$1$ENCRYPTION_SUFFIX"
-    # Encrypt as needed
-    if [ "$ENCRYPTION" = "yes" ]; then
-        echo
-        echo "Encrypting $1"
-        echo "  to $ENCRYPTED_FILE"
-        echo "  using cypher $ENCRYPTION_CIPHER and public key $ENCRYPTION_PUBLIC_KEY"
-        if openssl smime -encrypt -$ENCRYPTION_CIPHER -binary -outform DEM \
-            -out "$ENCRYPTED_FILE" \
-            -in "$1" "$ENCRYPTION_PUBLIC_KEY" ; then
-            echo "  and remove $1"
-            chmod $PERM "$ENCRYPTED_FILE"
-            rm -f "$1"
-        fi
+  ENCRYPTED_FILE="$1${ENCRYPTION}_SUFFIX"
+  # Encrypt as needed
+  if [ "${ENCRYPTION}" = "yes" ]; then
+    echo
+    echo "Encrypting $1"
+    echo "  to ${ENCRYPTED}_FILE"
+    echo "  using cypher ${ENCRYPTION}_CIPHER and public key ${ENCRYPTION}_PUBLIC_KEY"
+    if openssl smime -encrypt -${ENCRYPTION}_CIPHER -binary -outform DEM \
+      -out "${ENCRYPTED}_FILE" \
+      -in "$1" "${ENCRYPTION}_PUBLIC_KEY"; then
+      echo "  and remove $1"
+      chmod ${PERM} "${ENCRYPTED}_FILE"
+      rm -f "$1"
     fi
-    return 0
+  fi
+  return 0
 }
 
 # Compression (and encrypt) function plus latest copy
 SUFFIX=""
 compression () {
-if [ "$COMP" = "gzip" ]; then
+  if [ "${COMP}" = "gzip" ]; then
     gzip -f "$1"
     echo
     echo Backup Information for "$1"
     gzip -l "$1.gz"
     SUFFIX=".gz"
-elif [ "$COMP" = "bzip2" ]; then
+  elif [ "${COMP}" = "bzip2" ]; then
     echo Compression information for "$1.bz2"
     bzip2 -f -v $1 2>&1
     SUFFIX=".bz2"
-elif [ "$COMP" = "xz" ]; then
+  elif [ "${COMP}" = "xz" ]; then
     echo Compression information for "$1.xz"
-    xz -9 -v $1 2>&1
+    xz -4 -v $1 2>&1
     SUFFIX=".xz"
-else
+  else
     echo "No compression option set, check advanced settings"
-fi
-encryption $1$SUFFIX
-if [ "$LATEST" = "yes" ]; then
-    cp $1$SUFFIX* "$BACKUPDIR/latest/"
-fi
-return 0
+  fi
+  encryption $1${SUFFIX}
+  if [ "${LATEST}" = "yes" ]; then
+    cp $1* "${BACKUPDIR}/latest/"
+  fi
+  return 0
 }
 
 # Run command before we begin
-if [ "$PREBACKUP" ]
-    then
-    echo ======================================================================
-    echo "Prebackup command output."
-    echo
-    $PREBACKUP
-    echo
-    echo ======================================================================
-    echo
+if [ "${PREBACKUP}" ]; then
+  echo ======================================================================
+  echo "Prebackup command output."
+  echo
+  ${PREBACKUP}
+  echo
+  echo ======================================================================
+  echo
 fi
 
-
-if [ "$SEPDIR" = "yes" ]; then # Check if CREATE DATABSE should be included in Dump
-    if [ "$CREATE_DATABASE" = "no" ]; then
-        OPT="$OPT"
-    else
-        OPT="$OPT --create"
-    fi
+if [ "${CREATE_DATABASE}" = "no" ]; then
+  OPT="${OPT}"
 else
-    OPT="$OPT"
+  OPT="${OPT} --create"
 fi
+OPT="${OPT} -F d -j 2 -Z 0"
 
 # Hostname for LOG information
-if [ "$DBHOST" = "localhost" ]; then
-    HOST=`hostname`
-    PGHOST=""
+if [ "${DBHOST}" = "localhost" ]; then
+  HOST=`hostname`-${DBPORT}
+  PGHOST="-p ${DBPORT}"
 else
-    HOST=$DBHOST
-    PGHOST="-h $DBHOST"
+  HOST=${DBHOST}-${DBPORT}
+  PGHOST="-h ${DBHOST} -p ${DBPORT}"
 fi
 
 # If backing up all DBs on the server
-if [ "$DBNAMES" = "all" ]; then
-    if [ -n "$SU_USERNAME" ]; then
-        DBNAMES="$(su - $SU_USERNAME -l -c "LANG=C psql -U $USERNAME $PGHOST -l -A -F: | sed -ne '/:/ { /Name:Owner/d; /template0/d; s/:.*$//; p }'")"
-    else
-        DBNAMES="`LANG=C psql -U $USERNAME $PGHOST -l -A -F: | sed -ne "/:/ { /Name:Owner/d; /template0/d; s/:.*$//; p }"`"
-    fi
+if [ "${DBNAMES}" = "all" ]; then
+  if [ -n "${SU_USERNAME}" ]; then
+    DBNAMES="$(su - ${SU_USERNAME} -l -c "LANG=C psql -U ${USERNAME} ${PGHOST} -l -A -F: | sed -ne '/:/ { /Name:Owner/d; /template0/d; s/:.*$//; p }'")"
+  else
+    DBNAMES="`LANG=C psql -U ${USERNAME} ${PGHOST} -l -A -F: | sed -ne "/:/ { /Name:Owner/d; /template0/d; s/:.*$//; p }"`"
+  fi
 
-    # If DBs are excluded
-    for exclude in $DBEXCLUDE
-    do
-        DBNAMES=`echo $DBNAMES | sed "s/\b$exclude\b//g"`
-    done
-    DBNAMES="$(echo $DBNAMES| tr '\n' ' ')"
-    MDBNAMES=$DBNAMES
+  # If DBs are excluded
+  for exclude in ${DBEXCLUDE}; do
+    DBNAMES=`echo ${DBNAMES} | sed "s/\b${exclude}\b//g"`
+  done
+  DBNAMES="$(echo ${DBNAMES}| tr '\n' ' ')"
+  MDBNAMES=${DBNAMES}
 fi
 
 # Include global objects (users, tablespaces)
-DBNAMES="$GLOBALS_OBJECTS $DBNAMES"
-MDBNAMES="$GLOBALS_OBJECTS $MDBNAMES"
+#DBNAMES="${GLOBALS}_OBJECTS ${DBNAMES}"
+#MDBNAMES="${GLOBALS}_OBJECTS ${MDBNAMES}"
 
 echo ======================================================================
-echo AutoPostgreSQLBackup VER $VER
+echo AutoPostgreSQLBackup VER ${VER}
 echo http://autopgsqlbackup.frozenpc.net/
 echo
-echo Backup of Database Server - $HOST
+echo Backup of Database Server - ${HOST}
 echo ======================================================================
 
-# Test is seperate DB backups are required
-if [ "$SEPDIR" = "yes" ]; then
 echo Backup Start Time `date`
 echo ======================================================================
-    # Monthly Full Backup of all Databases
-    if [ "$DOM" = "01" ]; then
-        for MDB in $MDBNAMES
-        do
-
-             # Prepare $DB for using
-                MDB="`echo $MDB | sed 's/%/ /g'`"
-
-            if [ ! -e "$BACKUPDIR/monthly/$MDB" ]       # Check Monthly DB Directory exists.
-            then
-                mkdir -p "$BACKUPDIR/monthly/$MDB"
-            fi
-            echo Monthly Backup of $MDB...
-                dbdump "$MDB" "$BACKUPDIR/monthly/$MDB/${MDB}_$DATE.$M.$MDB.$EXT"
-                compression "$BACKUPDIR/monthly/$MDB/${MDB}_$DATE.$M.$MDB.$EXT"
-                BACKUPFILES="$BACKUPFILES $BACKUPDIR/monthly/$MDB/${MDB}_$DATE.$M.$MDB.$EXT$SUFFIX*"
-            echo ----------------------------------------------------------------------
-        done
+# Monthly Full Backup of all Databases
+if [[ "${DOMONTHLY}" = "yes" && "${DOM}" = "01" ]]; then
+  for MDB in ${MDBNAMES}; do
+    # Prepare ${DB} for using
+    MDB="`echo ${MDB} | sed 's/%/ /g'`"
+    if [ ! -e "${BACKUPDIR}/monthly/${MDB}" ]; then
+        mkdir -p "${BACKUPDIR}/monthly/${MDB}"
     fi
-
-    for DB in $DBNAMES
-    do
-    # Prepare $DB for using
-    DB="`echo $DB | sed 's/%/ /g'`"
-
-    # Create Seperate directory for each DB
-    if [ ! -e "$BACKUPDIR/daily/$DB" ]      # Check Daily DB Directory exists.
-        then
-        mkdir -p "$BACKUPDIR/daily/$DB"
-    fi
-
-    if [ ! -e "$BACKUPDIR/weekly/$DB" ]     # Check Weekly DB Directory exists.
-        then
-        mkdir -p "$BACKUPDIR/weekly/$DB"
-    fi
-
-    # Weekly Backup
-    if [ "$DNOW" = "$DOWEEKLY" ]; then
-        echo Weekly Backup of Database \( $DB \)
-        echo Rotating 5 weeks Backups...
-            if [ "$W" -le 05 ];then
-                REMW=`expr 48 + $W`
-            elif [ "$W" -lt 15 ];then
-                REMW=0`expr $W - 5`
-            else
-                REMW=`expr $W - 5`
-            fi
-        rm -fv "$BACKUPDIR/weekly/$DB/${DB}_week.$REMW".*
-        echo
-            dbdump "$DB" "$BACKUPDIR/weekly/$DB/${DB}_week.$W.$DATE.$EXT"
-            compression "$BACKUPDIR/weekly/$DB/${DB}_week.$W.$DATE.$EXT"
-            BACKUPFILES="$BACKUPFILES $BACKUPDIR/weekly/$DB/${DB}_week.$W.$DATE.$EXT$SUFFIX*"
-        echo ----------------------------------------------------------------------
-
-    # Daily Backup
+    echo Monthly Backup of ${MDB}...
+        dbdump "${MDB}" "${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}/"
+        compression "${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}/*"
+        BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/monthly/${MDB}/${MDB}_${DATE}.${M}.${MDB}/*"
+    echo ----------------------------------------------------------------------
+  done
+fi
+for DB in ${DBNAMES}; do
+  # Prepare ${DB} for using
+  DB="`echo ${DB} | sed 's/%/ /g'`"
+  # Create Seperate directory for each DB
+  if [ ! -e "${BACKUPDIR}/daily/${DB}" ]; then
+    mkdir -p "${BACKUPDIR}/daily/${DB}"
+  fi
+  if [ ! -e "${BACKUPDIR}/weekly/${DB}" ]; then
+    mkdir -p "${BACKUPDIR}/weekly/${DB}"
+  fi
+  # Weekly Backup
+  if [ "${DNOW}" = "${DOWEEKLY}" ]; then
+    echo Weekly Backup of Database \( ${DB} \)
+    echo Rotating 5 weeks Backups...
+    if [ "${W}" -le 05 ]; then
+      REMW=`expr 48 + ${W}`
+    elif [ "${W}" -lt 15 ]; then
+      REMW=0`expr ${W} - 5`
     else
-        echo Daily Backup of Database \( $DB \)
-        echo Rotating last weeks Backup...
-        rm -fv "$BACKUPDIR/daily/$DB"/*."$DOW".$EXT*
-        echo
-            dbdump "$DB" "$BACKUPDIR/daily/$DB/${DB}_$DATE.$DOW.$EXT"
-            compression "$BACKUPDIR/daily/$DB/${DB}_$DATE.$DOW.$EXT"
-            BACKUPFILES="$BACKUPFILES $BACKUPDIR/daily/$DB/${DB}_$DATE.$DOW.$EXT$SUFFIX*"
-        echo ----------------------------------------------------------------------
+      REMW=`expr ${W} - 5`
     fi
-    done
+    rm -fv "${BACKUPDIR}/weekly/${DB}/${DB}_week.${REMW}".*
+    echo
+    dbdump "${DB}" "${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}/"
+    compression "${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}/*"
+    BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/weekly/${DB}/${DB}_week.${W}.${DATE}/*"
+    echo ----------------------------------------------------------------------
+  # Daily Backup
+  else
+    echo Daily Backup of Database \( ${DB} \)
+    echo Rotating daily backups...
+    find "${BACKUPDIR}/daily/${DB}" -mtime +"${ROTATIONDAILY}" -type f -exec rm {} \;
+    find "${BACKUPDIR}/daily/${DB}" -type d -empty -type f -exec rmdir {} \;
+    echo
+    dbdump "${DB}" "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/"
+    compression "${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/*"
+    BACKUPFILES="${BACKUPFILES} ${BACKUPDIR}/daily/${DB}/${DB}_${DATE}.${DOW}/*"
+    echo ----------------------------------------------------------------------
+  fi
+done
 echo Backup End `date`
 echo ======================================================================
-
-
-else # One backup file for all DBs
-echo Backup Start `date`
-echo ======================================================================
-    # Monthly Full Backup of all Databases
-    if [ "$DOM" = "01" ]; then
-        echo Monthly full Backup of \( $MDBNAMES \)...
-            dbdump "$MDBNAMES" "$BACKUPDIR/monthly/$DATE.$M.all-databases.$EXT"
-            compression "$BACKUPDIR/monthly/$DATE.$M.all-databases.$EXT"
-            BACKUPFILES="$BACKUPFILES $BACKUPDIR/monthly/$DATE.$M.all-databases.$EXT$SUFFIX*"
-        echo ----------------------------------------------------------------------
-    fi
-
-    # Weekly Backup
-    if [ "$DNOW" = "$DOWEEKLY" ]; then
-        echo Weekly Backup of Databases \( $DBNAMES \)
-        echo
-        echo Rotating 5 weeks Backups...
-            if [ "$W" -le 05 ];then
-                REMW=`expr 48 + $W`
-            elif [ "$W" -lt 15 ];then
-                REMW=0`expr $W - 5`
-            else
-                REMW=`expr $W - 5`
-            fi
-        rm -fv "$BACKUPDIR/weekly/week.$REMW".*
-        echo
-            dbdump "$DBNAMES" "$BACKUPDIR/weekly/week.$W.$DATE.$EXT"
-            compression "$BACKUPDIR/weekly/week.$W.$DATE.$EXT"
-            BACKUPFILES="$BACKUPFILES $BACKUPDIR/weekly/week.$W.$DATE.$EXT$SUFFIX*"
-        echo ----------------------------------------------------------------------
-    # Daily Backup
-    else
-        echo Daily Backup of Databases \( $DBNAMES \)
-        echo
-        echo Rotating last weeks Backup...
-        rm -fv "$BACKUPDIR"/daily/*."$DOW".$EXT*
-        echo
-            dbdump "$DBNAMES" "$BACKUPDIR/daily/$DATE.$DOW.$EXT"
-            compression "$BACKUPDIR/daily/$DATE.$DOW.$EXT"
-            BACKUPFILES="$BACKUPFILES $BACKUPDIR/daily/$DATE.$DOW.$EXT$SUFFIX*"
-        echo ----------------------------------------------------------------------
-    fi
-echo Backup End Time `date`
-echo ======================================================================
-fi
 echo Total disk space used for backup storage..
 echo Size - Location
-echo `du -hs "$BACKUPDIR"`
+echo `du -hs "${BACKUPDIR}"`
 echo
 
-
 # Run command when we're done
-if [ "$POSTBACKUP" ]
-    then
-    echo ======================================================================
-    echo "Postbackup command output."
-    echo
-    $POSTBACKUP
-    echo
-    echo ======================================================================
+if [ "${POSTBACKUP}" ]; then
+  echo ======================================================================
+  echo "Postbackup command output."
+  echo
+  ${POSTBACKUP}
+  echo
+  echo ======================================================================
 fi
 
 #Clean up IO redirection
 exec 1>&6 6>&-      # Restore stdout and close file descriptor #6.
 exec 2>&7 7>&-      # Restore stdout and close file descriptor #7.
 
-if [ "$MAILCONTENT" = "files" ]
-then
-    if [ -s "$LOGERR" ]
-    then
-        # Include error log if is larger than zero.
-        BACKUPFILES="$BACKUPFILES $LOGERR"
-        ERRORNOTE="WARNING: Error Reported - "
+if [ "${EMAIL}" = "yes" ]; then
+  if [ "${MAILCONTENT}" = "files" ]; then
+    if [ -s "${LOGERR}" ]; then
+      # Include error log if is larger than zero.
+      BACKUPFILES="${BACKUPFILES} ${LOGERR}"
+      ERRORNOTE="WARNING: Error Reported - "
     fi
     #Get backup size
-    ATTSIZE=`du -c $BACKUPFILES | grep "[[:digit:][:space:]]total$" |sed s/\s*total//`
-    if [ $MAXATTSIZE -ge $ATTSIZE ]
-    then
-        if which biabam >/dev/null 2>&1
-        then
-            BACKUPFILES=$(echo $BACKUPFILES | sed -r -e 's#\s+#,#g')
-            biabam -s "PostgreSQL Backup Log and SQL Files for $HOST - $DATE" $BACKUPFILES $MAILADDR < $LOGFILE
-        elif which heirloom-mailx >/dev/null 2>&1
-        then
-            BACKUPFILES=$(echo $BACKUPFILES | sed -e 's# # -a #g')
-            heirloom-mailx -s "PostgreSQL Backup Log and SQL Files for $HOST - $DATE" $BACKUPFILES $MAILADDR < $LOGFILE
-        elif which neomutt >/dev/null 2>&1
-        then
-            BACKUPFILES=$(echo $BACKUPFILES | sed -e 's# # -a #g')
-            neomutt -s "PostgreSQL Backup Log and SQL Files for $HOST - $DATE" -a $BACKUPFILES -- $MAILADDR < $LOGFILE
-        elif which mutt >/dev/null 2>&1
-        then
-            BACKUPFILES=$(echo $BACKUPFILES | sed -e 's# # -a #g')
-            mutt -s "PostgreSQL Backup Log and SQL Files for $HOST - $DATE" -a $BACKUPFILES -- $MAILADDR < $LOGFILE
-        else
-            cat "$LOGFILE" | mail -s "WARNING! - Enable to send PostgreSQL Backup dumps, no suitable mail client found on $HOST - $DATE" $MAILADDR
-        fi
+    ATTSIZE=`du -c ${BACKUPFILES} | grep "[[:digit:][:space:]]total$" |sed s/\s*total//`
+    if [ ${MAXATTSIZE} -ge ${ATTSIZE} ]; then
+      if which biabam >/dev/null 2>&1; then
+        BACKUPFILES=$(echo ${BACKUPFILES} | sed -r -e 's#\s+#,#g')
+        biabam -s "PostgreSQL Backup Log and SQL Files for ${HOST} - ${DATE}" ${BACKUPFILES} ${MAILADDR} < ${LOGFILE}
+      elif which heirloom-mailx >/dev/null 2>&1; then
+        BACKUPFILES=$(echo ${BACKUPFILES} | sed -e 's# # -a #g')
+        heirloom-mailx -s "PostgreSQL Backup Log and SQL Files for ${HOST} - ${DATE}" ${BACKUPFILES} ${MAILADDR} < ${LOGFILE}
+      elif which neomutt >/dev/null 2>&1; then
+        BACKUPFILES=$(echo ${BACKUPFILES} | sed -e 's# # -a #g')
+        neomutt -s "PostgreSQL Backup Log and SQL Files for ${HOST} - ${DATE}" -a ${BACKUPFILES} -- ${MAILADDR} < ${LOGFILE}
+      elif which mutt >/dev/null 2>&1; then
+        BACKUPFILES=$(echo ${BACKUPFILES} | sed -e 's# # -a #g')
+        mutt -s "PostgreSQL Backup Log and SQL Files for ${HOST} - ${DATE}" -a ${BACKUPFILES} -- ${MAILADDR} < ${LOGFILE}
+      else
+        cat "${LOGFILE}" | mail -s "WARNING! - Enable to send PostgreSQL Backup dumps, no suitable mail client found on ${HOST} - ${DATE}" ${MAILADDR}
+      fi
     else
-        cat "$LOGFILE" | mail -s "WARNING! - PostgreSQL Backup exceeds set maximum attachment size on $HOST - $DATE" $MAILADDR
+      cat "${LOGFILE}" | mail -s "WARNING! - PostgreSQL Backup exceeds set maximum attachment size on ${HOST} - ${DATE}" ${MAILADDR}
     fi
-elif [ "$MAILCONTENT" = "log" ]
-then
-    cat "$LOGFILE" | mail -s "PostgreSQL Backup Log for $HOST - $DATE" $MAILADDR
-    if [ -s "$LOGERR" ]
-        then
-            cat "$LOGERR" | mail -s "ERRORS REPORTED: PostgreSQL Backup error Log for $HOST - $DATE" $MAILADDR
+  elif [ "${MAILCONTENT}" = "log" ]; then
+    cat "${LOGFILE}" | mail -s "PostgreSQL Backup Log for ${HOST} - ${DATE}" ${MAILADDR}
+    if [ -s "${LOGERR}" ]; then
+      cat "${LOGERR}" | mail -s "ERRORS REPORTED: PostgreSQL Backup error Log for ${HOST} - ${DATE}" ${MAILADDR}
     fi
-elif [ "$MAILCONTENT" = "quiet" ]
-then
-    if [ -s "$LOGERR" ]
-        then
-            cat "$LOGERR" | mail -s "ERRORS REPORTED: PostgreSQL Backup error Log for $HOST - $DATE" $MAILADDR
-            cat "$LOGFILE" | mail -s "PostgreSQL Backup Log for $HOST - $DATE" $MAILADDR
+  elif [ "${MAILCONTENT}" = "quiet" ]; then
+    if [ -s "${LOGERR}" ]; then
+      cat "${LOGERR}" | mail -s "ERRORS REPORTED: PostgreSQL Backup error Log for ${HOST} - ${DATE}" ${MAILADDR}
+      cat "${LOGFILE}" | mail -s "PostgreSQL Backup Log for ${HOST} - ${DATE}" ${MAILADDR}
     fi
+  fi
 else
-    if [ -s "$LOGERR" ]
-        then
-            cat "$LOGFILE"
-            echo
-            echo "###### WARNING ######"
-            echo "Errors reported during AutoPostgreSQLBackup execution.. Backup failed"
-            echo "Error log below.."
-            cat "$LOGERR"
-    else
-        cat "$LOGFILE"
-    fi
+  if [ -s "${LOGERR}" ]; then
+    cat "${LOGFILE}"
+    echo
+    echo "###### WARNING ######"
+    echo "Errors reported during AutoPostgreSQLBackup execution.. Backup failed"
+    echo "Error log below.."
+    cat "${LOGERR}"
+  else
+    cat "${LOGFILE}"
+  fi
 fi
 
-if [ -s "$LOGERR" ]
-    then
-        STATUS=1
-    else
-        STATUS=0
+if [ -s "${LOGERR}" ]; then
+  STATUS=1
+else
+  STATUS=0
 fi
 
 # Clean up Logfile
-rm -f "$LOGFILE"
-rm -f "$LOGERR"
+rm -f "${LOGFILE}"
+rm -f "${LOGERR}"
 
-exit $STATUS
+exit ${STATUS}
